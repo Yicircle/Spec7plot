@@ -4,35 +4,35 @@ from pathlib import Path
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
-from astropy.reproject import reproject_interp
+from reproject import reproject_interp
 
 
 class imRegister:
     def __init__(self,
-                 input_files: list | np.ndarray
+                 input_images: list | np.ndarray,
                  output_dir: str | Path
                  ) -> None:
         """
         Initialize the image registration class.
         Parameters:
-            input_file (list or np.ndarray): List of input file names or a numpy array of file names.
+            input_images (list or np.ndarray): List of input file names or a numpy array of file names.
             output_dir (str or Path): Directory where the output files will be saved.
         """
         
         # Check if the input file is a list or a single file.
-        if not isinstance(input_files, np.ndarray):
-            if isinstance(input_files, str):
+        if not isinstance(input_images, np.ndarray):
+            if isinstance(input_images, str):
                 raise ValueError("Input file must be a list of files or a numpy array.")
             else:
                 try:
-                    self.input_files = np.asarray(input_files)
+                    self.input_images = np.asarray(input_images)
                 except Exception as e:
                     raise ValueError(f"Could not convert input file to numpy array: {e}")
         else:
-            self.input_files = input_files
+            self.input_images = input_images
         
         # Get the reference file name.
-        self.ref_file = self.input_files[0]
+        self.ref_file = self.input_images[0]
         
         # Set the output directory.
         if isinstance(output_dir, str):
@@ -50,17 +50,35 @@ class imRegister:
                 raise OSError(f"Could not create output directory: {e}")
 
     
-    def run(self):
+    def run(self,
+            position: tuple | list | np.ndarray = (5100, 3400),
+            size: tuple | list | np.ndarray = (100, 100)
+            ) -> list | np.ndarray:
         """
         Run the image registration process for all input files.
         """
         # Iterate through each input file and perform registration.
-        for input_file in self.input_files:
-            self.wRegistration(input_file, self.ref_file, self.output_dir)
-        
+        for input_file in self.input_images:
+            self.wRegistration(input_file)
+            self.cutout(position=position, size=size, filename=input_file)
+            
+        return self.output_dir
+    
+    @staticmethod
+    def add_prefix(path, prefix: str) -> Path:
+        """
+        Add a prefix to the file name in the given path.
+        Parameters:
+            path (str or Path): The original file path.
+            prefix (str): The prefix to add to the file name.
+        """
+        p = Path(path)
+        # p.parent: directory path, p.name: file name(with extension)
+        new_name = prefix + p.name
+        return new_name
 
     def wRegistration(self,
-                      input_file: str,
+                      input_file: str
                       ) -> None:
         """
         Perform image registration for various observatories using astropy.reproject.
@@ -72,7 +90,7 @@ class imRegister:
         # Construct output file path
         output_file = os.path.join(
             self.output_dir,
-            f"wr_{input_file}"
+            self.add_prefix(input_file, prefix='wr_')  # Add 'wr_' prefix to the output file
         )
         
         # --- Reprojection using astropy.reproject ---
@@ -106,51 +124,88 @@ class imRegister:
             fits.writeto(output_file, output_data, input_header, overwrite=True)
 
 
-    def cutout(self,
-               position: tuple,
-               size: tuple,
-               filename: str = None
-               ) -> None:
-        
+    def cutout(
+        self,
+        position: tuple,
+        size: tuple,
+        filename: str = None
+    ) -> str:
+        """
+        Cut out a sub-image from a FITS file, preserving its original header
+        except for updated WCS and size keywords.
+
+        Parameters
+        ----------
+        position : tuple
+            (x, y) center of the cutout in pixel coordinates.
+        size : tuple
+            (width, height) in pixels of the cutout.
+        filename : str
+            Path to the input FITS file.
+
+        Returns
+        -------
+        str
+            Path to the output cutout FITS file.
+        """
         if filename is None:
             raise ValueError("Filename must be provided for the cutout operation.")
-        
-        output_file = os.path.join(
-            self.output_dir,
-            f"cut_{filename}"
-        ) if not 'wr_' in filename else os.path.join(
-            self.output_dir,
-            f"cut_{filename.replace('wr_', '')}"
-        )
-        
-        # Open fits file
+
+        # Determine output filename
+        base = os.path.basename(filename)
+        out_name = self.add_prefix(base, prefix='cut_') if not base.startswith('wr_') else f"cut_{base.replace('wr_', '')}"
+        output_file = os.path.join(self.output_dir, out_name)
+
+        # Open input FITS and copy header
         with fits.open(filename) as hdul:
-            hdu = hdul[0]
-            data = hdu.data
-            header = hdu.header
+            orig_hdu = hdul[0]
+            orig_header = orig_hdu.header.copy()
+            data = orig_hdu.data
 
-        # Create a WCS object from the header
-        wcs = WCS(header)
+        # Create WCS from original header
+        wcs_orig = WCS(orig_header)
 
-        # Create the cutout; this will update the WCS accordingly.
-        cutout = Cutout2D(data, position, size, wcs=wcs)
+        # Perform cutout, WCS updated internally
+        cut = Cutout2D(data, position, size, wcs=wcs_orig)
 
-        # Create a new header from the cutout's WCS.
-        new_header = cutout.wcs.to_header()
-        
-        # Update the new header with additional info (e.g., cutout size)
+        # Start new header from original and remove old WCS keywords
+        new_header = orig_header.copy()
+        for key in list(new_header.keys()):
+            if key.startswith(('CTYPE', 'CRPIX', 'CRVAL', 'CDELT', 'CD')):
+                new_header.remove(key, ignore_missing=True)
+
+        # Merge new WCS header
+        wcs_header = cut.wcs.to_header(relax=True)
+        for k, v in wcs_header.items():
+            new_header[k] = v
+
+        # Update size keywords
         new_header['NAXIS'] = 2
-        new_header['NAXIS1'] = cutout.data.shape[1]
-        new_header['NAXIS2'] = cutout.data.shape[0]
-        del new_header['CDELT1']
-        del new_header['CDELT2']
-        new_header['CD1_1'] = -0.505 / 3600  # Default pixel scale of 7DT in arcsec/pixel
-        new_header['CD1_2'] = 0
-        new_header['CD2_1'] = 0
-        new_header['CD2_2'] = 0.505 / 3600
+        new_header['NAXIS1'] = cut.data.shape[1]
+        new_header['NAXIS2'] = cut.data.shape[0]
+        
+        # Updat CD matrix
+        if 'CD1_1' in new_header and 'CD2_2' in new_header:
+            pass
+        else:
+            new_header['CD1_1'] = orig_header.get('CD1_1', 1.0)
+            new_header['CD2_2'] = orig_header.get('CD2_2', 1.0)
+            new_header['CD1_1'] = orig_header.get('CD1_1', 1.0)
+            new_header['CD2_2'] = orig_header.get('CD2_2', 1.0)
+            # if 'CDELT1' in orig_header and 'CDELT2' in orig_header:
+            #     new_header['CDELT1'] = orig_header.get('CDELT1', 1.0)
+            #     new_header['CDELT2'] = orig_header.get('CDELT2', 1.0)
 
-        # Save the cutout as a new FITS file, preserving the updated WCS.
+        if 'ZP_AUTO' in orig_header:
+            ZP = orig_header['ZP_AUTO']
+            flux = 3631 * (cut.data) * 10 ** (-ZP / 2.5)  # Jy
+            f_data = 1e3 * flux  # mJy
+            new_header['ZP_AUTO'] = ZP
+        else:
+            f_data = cut.data
+        
+        # Write output preserving original header entries
+        hdu_out = fits.PrimaryHDU(data=f_data, header=new_header)
+        hdu_out.writeto(output_file, overwrite=True)
 
-        hdu = fits.PrimaryHDU(data=cutout.data, header=new_header)
-        hdul = fits.HDUList([hdu])
-        hdul.writeto(output_file, overwrite=True)
+        return output_file

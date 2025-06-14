@@ -1,0 +1,7 @@
+# Files and directories to ignore in the project
+#
+# Cache files
+__pycache__/
+
+# Test directories and files
+Test/*
