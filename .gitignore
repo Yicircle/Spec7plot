@@ -5,3 +5,12 @@ __pycache__/
 
 # Test directories and files
 Test/*
+
+# Build directories
+build/
+# Distribution directories
+dist/
+# Python egg files
+*.egg
+# Python egg-info directories
+*.egg-info/
