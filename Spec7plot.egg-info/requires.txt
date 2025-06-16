@@ -1,0 +1,7 @@
+astropy
+matplotlib
+numpy
+pathlib
+photutils
+reproject
+seaborn
