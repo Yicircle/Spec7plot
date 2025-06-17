@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='Spec7plot',
-    version='1.0.0',
+    version='1.0.2',
     description='Spectral figure plotting package for 7-Dimensional Telescope users by Won-Hyeong Lee',
     author='Won-Hyeong Lee',
     author_email='wohy1220@gmail.com',
@@ -16,7 +16,8 @@ setup(
         'photutils',
         'reproject',
     ],
-    packages=find_packages(exclude=[]),
+    packages=find_packages(where='src'),
+    package_dir={'': 'src'},
     keywords=[''],
     python_requires='>=3.10',
     package_data={},
