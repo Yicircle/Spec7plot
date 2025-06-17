@@ -1,4 +1,5 @@
 import os
+import warnings
 import numpy as np
 from pathlib import Path
 from astropy.io import fits
@@ -6,6 +7,8 @@ from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
 from reproject import reproject_interp
 
+from astropy.wcs import FITSFixedWarning
+warnings.simplefilter('ignore', category=FITSFixedWarning)
 
 class imRegister:
     def __init__(self,

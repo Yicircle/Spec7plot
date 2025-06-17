@@ -87,6 +87,7 @@ class plot:
         else:
             raise TypeError("Cube must be a string or Path object pointing to a file.")
         
+        loc_string = None
         # Check the type of pixel_loc and sky_loc
         if pixel_loc is None and sky_loc is None:
             raise ValueError("Both pixel_loc and sky_loc cannot be None. At least one must be provided.")
@@ -99,9 +100,12 @@ class plot:
                 raise ValueError("Aperture must be provided when using sky_loc.")
             # Convert sky_loc to pixel_loc based on the WCS information
             from astropy.wcs import WCS
-            wcs = WCS(header)
-            pixel_loc = wcs.world_to_pixel(sky_loc)
-            aperture = int(aperture / wcs.pixel_scale_matrix[0, 0])  # Convert aperture to pixel scale
+            wcs2d = WCS(header).celestial
+            pixel_loc = wcs2d.all_world2pix(sky_loc[0], sky_loc[1], 0)
+            aperture = np.abs(int(aperture / (wcs2d.pixel_scale_matrix[0, 0] * 3600)))  # Convert aperture to pixel scale
+            loc_string = f'{sky_loc[0]:.3f}, {sky_loc[1]:.3f}'
+        else:
+            loc_string = f'{pixel_loc[0]:.1f}, {pixel_loc[1]:.1f}'
         
         # Extract the SED from the location
         k, l = pixel_loc
@@ -125,7 +129,7 @@ class plot:
             raise ValueError("Wavelength information not found in the header. Ensure CDELT3 or CD3_3 is present.")
             
         # Create a plot of the SED
-        if ax is None:
+        if ax is None and output_dir is None:
             fig, ax = plt.subplots(1, 1, figsize=(8, 6), dpi=100)
         else:
             fig = ax.figure
@@ -135,9 +139,10 @@ class plot:
         
         for i, (lamb, flux) in enumerate(zip(piv_lambs, sed)):
             label = '7DT' if i == 0 else None
+            marker = 'o' if flux > 0 else 'v'
             ax.errorbar(
                 [lamb], [flux], yerr=[flux * 0.0] , xerr=[250/2],
-                marker='o', lw=0, elinewidth=1, capsize=2,
+                marker=marker, lw=0, elinewidth=1, capsize=2,
                 c=mcolors[i], label=label
                 )
         del_y = sed.max() - sed.min()
@@ -147,9 +152,9 @@ class plot:
         ax.set_ylim(y_min, y_max)
         ax.set_xlabel(r'Wavelength [$\mathrm{\AA}$]')
         ax.set_ylabel('Flux [mJy]')
-        ax.legend(loc='lower right')
+        ax.legend(loc='best')
         ax.grid(True, which='both', color='#666666', linestyle='--', alpha=0.5)
-        ax.set_title(f'7DT SED\npixel location ({k}, {l})', fontdict={'fontsize':14})
+        ax.set_title('7DT SED\nLocation ('+loc_string+')', fontdict={'fontsize':14})
         fig.tight_layout()
         
         # Save the plot if output_dir is provided
@@ -160,6 +165,4 @@ class plot:
             fig.savefig(output_path, dpi=300)
             plt.close(fig)
         else:
-            plt.show()
-            
-        return ax
+           return ax

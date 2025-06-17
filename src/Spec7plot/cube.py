@@ -65,26 +65,32 @@ class Cube:
             data0 = hdul[self.ext].data
             hdr0 = hdul[self.ext].header
 
+        # Full filters list
+        wavelengths = [i for i in np.arange(400, 900, 25)]
+        
         ny, nx = data0.shape
-        n_files = len(self.file_list)
-        cube_data = np.empty((n_files, ny, nx), dtype=data0.dtype)
+        n_filt = len(wavelengths)
+        cube_data = np.empty((n_filt, ny, nx), dtype=data0.dtype)
         
         # 2) Collect data and wavelength values
-        wavelengths = []
         for i, fname in enumerate(self.file_list):
             with fits.open(fname) as hdul:
                 data_i = hdul[self.ext].data
                 hdr_i = hdul[self.ext].header
-            cube_data[i] = data_i
 
             if 'FILTER' in hdr_i:
                 try:
                     wav = float(''.join(filter(str.isdigit, hdr_i['FILTER'])))
+                    argwav = np.argwhere(np.array(wavelengths) == wav)
+                    if argwav.size > 0:
+                        cube_data[argwav[0][0], :, :] = data_i
+                    else:
+                        pass
                 except ValueError:
-                    wav = float(i)
+                    continue  # Skip if FILTER cannot be converted to float
             else:
-                wav = float(i)
-            wavelengths.append(wav)
+                continue
+            
         
         # 3) Define wavelengths and sort the data 
         sort_idx = np.argsort(wavelengths)
@@ -94,8 +100,6 @@ class Cube:
         wavelengths = [wavelengths[i] for i in sort_idx]
         delta_wav = np.median(np.diff(wavelengths)) if len(wavelengths) > 1 else 1.0
         ref_wav   = wavelengths[0]
-        
-        print(wavelengths)
 
         # 4) Create WCS from the first file's header
         wcs0 = WCS(hdr0)
@@ -123,7 +127,7 @@ class Cube:
         cube_hdr['NAXIS']   = 3
         cube_hdr['NAXIS1']  = nx
         cube_hdr['NAXIS2']  = ny
-        cube_hdr['NAXIS3']  = n_files
+        cube_hdr['NAXIS3']  = n_filt
 
         cube_hdr['CTYPE3']  = 'WAVELENGTH'
         cube_hdr['CUNIT3']  = hdr0.get('CUNIT3', hdr0.get('CUNIT1', '')) 
