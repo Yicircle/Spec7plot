@@ -1,7 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors
+import colorsys
 import seaborn as sns
 from pathlib import Path
+from astropy.io import fits
+from astropy.wcs import WCS
 
 class plot:
     def __init__(self):
@@ -15,6 +19,22 @@ class plot:
         except:
             plt.rcParams["font.family"] = "serif"
             plt.rcParams["mathtext.fontset"] = "dejavuserif"
+    
+    @staticmethod
+    def find_rec(N):
+        # Start from the square root of N and work downwards
+        num_found = False
+        while ~num_found:
+            for k in range(int(N ** 0.5), 0, -1):
+                if N % k == 0:  # k must divide N
+                    l = N // k  # Calculate l
+                    # Check the condition that neither exceeds twice the other
+                    if k <= 2 * l and l <= 2 * k:
+                        num_found = True
+                        return k, l
+            N = N + 1
+        return None, None  # Return None if no valid pair is found
+    
     
     def makeSpecColors(self, 
                        n: int = 40, 
@@ -43,6 +63,36 @@ class plot:
         # List of colors
         clist = [cmap(i / (n - 1)) for i in range(n)]
         return clist
+    
+    @staticmethod
+    def lighten_hls(color, amount=0.8):
+        """
+        Convert RGB to HLS, increase lightness by amount, convert back.
+        amount: fraction of remaining lightness to add [0,1].
+        """
+        # 1) Seperate RGB (ignore alpha)
+        r, g, b, a = color
+        # 2) RGB → HLS
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        # 3) Increase Lightness (cap at 1.0)
+        l_l = min(1.0, l + amount * (1 - l))
+        # 4) HLS → RGB
+        r_l, g_l, b_l = colorsys.hls_to_rgb(h, l_l, s)
+        return (r_l, g_l, b_l, a)
+    
+    def makeSepcCmaps(self,
+                      n:int = 40,
+                      lightness:str = 'dark'
+                      ) -> list:
+        colours = [self.lighten_hls(c) for c in self.makeSpecColors(n)]
+        colours = [matplotlib.colors.rgb2hex(tuple(c), keep_alpha=True) for c in colours]
+        
+        if (lightness != 'light') & (lightness != 'dark'):
+            raise ValueError("Lightness should be either 'light' or 'dark'.")
+
+        cmaps = [sns.color_palette(f"{lightness}:{c}", as_cmap=True) for c in colours]
+        return cmaps
+
 
     def SED(self,
             cube: str | Path,
@@ -143,7 +193,7 @@ class plot:
             ax.errorbar(
                 [lamb], [flux], yerr=[flux * 0.0] , xerr=[250/2],
                 marker=marker, lw=0, elinewidth=1, capsize=2,
-                c=mcolors[i], label=label
+                c=mcolors[i], label=label, mec='#333333', mew='0.3'
                 )
         del_y = sed.max() - sed.min()
         y_max = sed.max() + del_y * 0.1
@@ -166,3 +216,100 @@ class plot:
             plt.close(fig)
         else:
            return ax
+       
+    
+    def Slice(self,
+              cube: str | Path,
+              index: int,
+              output_dir: str | Path = None,
+              ax: plt.Axes | None = None,
+              cmap: str | matplotlib.colors.Colormap = "bone"
+              ) -> None:
+        
+        from astropy.visualization import (
+            ZScaleInterval, AsymmetricPercentileInterval,
+            AsinhStretch, LogStretch, SqrtStretch,
+            ImageNormalize
+        )
+        
+        # Confirm the Cube Type
+        if isinstance(cube, (str, Path)):
+            if cube.endswith('.npy'):
+                data = np.load(cube)
+                if index not in np.arange(data.shape[0]):
+                    raise ValueError("Index is not in both the wavelength and indice range.")
+            elif cube.endswith('.fits'):
+                with fits.open(cube) as hdul:
+                    data = hdul[0].data
+                    header = hdul[0].header
+                    wcs = WCS(header).celestial
+                    if 'CDELT3' in header or 'CD3_3' in header:
+                        delta_wav = header.get('CDELT3', header.get('CD3_3', 1.0)) * 10
+                        ref_wav = header.get('CRVAL3', 0.0) * 10
+                        wave_array = ref_wav + np.arange(data.shape[0]) * delta_wav
+                    
+                    if index not in wave_array and index not in np.arange(data.shape[0]):
+                        raise ValueError("Index is not in both the wavelength and indice range.")
+                    elif index in wave_array:
+                        index = np.argwhere(wave_array == index)
+                    else:
+                        pass
+            else:
+                raise ValueError("Unsupported file format. Use .npy or .fits files.")
+        else:
+            raise TypeError("Cube must be a string or Path object pointing to a file.")
+        
+        # Set Visualization Scale/Interval
+        interval = ZScaleInterval()  # AsymmetricPercentileInterval(1.0, 99.0)  # Clip 1-99%
+        stretch = AsinhStretch()
+        norm = ImageNormalize(data, interval=interval)
+        
+        # Create a plot of the SED
+        if ax is None and output_dir is None:
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6), dpi=150, subplot_kw=dict(projection=wcs))
+        else:
+            fig = ax.figure
+            # Change Projection
+            bbox = ax.get_position()
+            fig.delaxes(ax)
+            ax = fig.add_axes(bbox, projection=wcs)
+            
+        # Plot slice
+        ax.imshow(data[index], origin="lower", cmap=cmap, norm=norm)
+        ax.set_xlabel('RA [deg]') if 'ra' in ax.get_xlabel() else ax.set_xlabel('x')
+        ax.set_ylabel('Dec [deg]') if 'dec' in ax.get_ylabel() else ax.set_ylabel('y')
+        
+        return ax
+        
+    
+    def allCube(self,
+            cube: str | Path,
+            output_dir: str | Path = None
+            ) -> None:
+        
+        with fits.open(cube) as hdul:
+            header = hdul[0].header
+            n_slice = int(header['NAXIS3'])
+            
+        k, l = self.find_rec(n_slice)
+        cmaps = self.makeSepcCmaps(n=20, lightness='dark')
+        
+        fig, axes = plt.subplots(k, l, figsize=(k*2.5, l*2.), dpi=200)
+        for i, ax in enumerate(axes.flatten()):
+            col = i % l
+            
+            ax = self.Slice(cube=cube, index=i, ax=ax, cmap=cmaps[i])
+            ax.tick_params(axis='both', which='both', 
+                           labelsize=7, direction='in',
+                           grid_color='#444444', grid_alpha=0.5, grid_linewidth=0.7, grid_linestyle='--')
+            ax.tick_params(axis='x', which='both',
+                           bottom=True, top=False)
+            ax.tick_params(axis='y', which='both',
+                           left=True, right=False)
+            ax.grid(True)
+            if col != 0:
+                # ax.coords['Dec'].set_ticks_visible(False)         # tick marks
+                ax.coords['Dec'].set_ticklabel_visible(False)     # tick labels
+                ax.set_ylabel('')
+            
+        plt.tight_layout()
