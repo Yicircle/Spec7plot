@@ -84,7 +84,7 @@ class plot:
                       n:int = 40,
                       lightness:str = 'dark'
                       ) -> list:
-        colours = [self.lighten_hls(c) for c in self.makeSpecColors(n)]
+        colours = [self.lighten_hls(c, amount=0.95) for c in self.makeSpecColors(n)]
         colours = [matplotlib.colors.rgb2hex(tuple(c), keep_alpha=True) for c in colours]
         
         if (lightness != 'light') & (lightness != 'dark'):
@@ -97,6 +97,7 @@ class plot:
     def SED(self,
             cube: str | Path,
             output_dir: str | Path = None,
+            output_name: str = None,
             pixel_loc: tuple | list | np.ndarray = None,
             sky_loc: tuple | list | np.ndarray = None,
             aperture: float | None = None,
@@ -211,7 +212,7 @@ class plot:
         if output_dir is not None:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f'sed_pixel_{k}_{l}.png'
+            output_path = output_dir / f'sed_pixel_{k}_{l}.png' if output_name is None else output_dir / output_name
             fig.savefig(output_path, dpi=300)
             plt.close(fig)
         else:
@@ -222,13 +223,16 @@ class plot:
               cube: str | Path,
               index: int,
               output_dir: str | Path = None,
+              output_name: str = None,
               ax: plt.Axes | None = None,
-              cmap: str | matplotlib.colors.Colormap = "bone"
+              cmap: str | matplotlib.colors.Colormap = "bone",
+              colorbar: bool = False,
+              scale: str = 'Zscale'
               ) -> None:
         
         from astropy.visualization import (
             ZScaleInterval, AsymmetricPercentileInterval,
-            AsinhStretch, LogStretch, SqrtStretch,
+            AsinhStretch, LogStretch, SqrtStretch, LinearStretch,
             ImageNormalize
         )
         
@@ -260,9 +264,13 @@ class plot:
             raise TypeError("Cube must be a string or Path object pointing to a file.")
         
         # Set Visualization Scale/Interval
-        interval = ZScaleInterval()  # AsymmetricPercentileInterval(1.0, 99.0)  # Clip 1-99%
-        stretch = AsinhStretch()
-        norm = ImageNormalize(data, interval=interval)
+        if scale.lower() == 'zscale':
+            interval = ZScaleInterval()
+            stretch = LinearStretch()
+        elif scale.lower() == 'log':
+            interval = None
+            stretch = LogStretch()
+        norm = ImageNormalize(data, interval=interval, stretch=stretch)
         
         # Create a plot of the SED
         if ax is None and output_dir is None:
@@ -275,16 +283,46 @@ class plot:
             ax = fig.add_axes(bbox, projection=wcs)
             
         # Plot slice
-        ax.imshow(data[index], origin="lower", cmap=cmap, norm=norm)
-        ax.set_xlabel('RA [deg]') if 'ra' in ax.get_xlabel() else ax.set_xlabel('x')
-        ax.set_ylabel('Dec [deg]') if 'dec' in ax.get_ylabel() else ax.set_ylabel('y')
+        im = ax.imshow(data[index], origin="lower", cmap=cmap, norm=norm)
+        if colorbar:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes('right', size='5%', pad=0.05)
+            cbar = fig.colorbar(im, cax=cax, orientation='vertical')
+            cbar.ax.tick_params(axis='x', which='both', direction='in', labelsize=7,
+                                bottom=False, top=False, labelbottom=False, labeltop=False,
+                                )
+            cbar.ax.tick_params(axis='y', which='both', direction='in', labelsize=7,
+                                left=False, right=True, labelleft=False, labelright=True,
+                                )
+            cbar.ax.set_ylabel('[mJy]', size=7, rotation='horizontal')
         
-        return ax
+        ax.set_xlabel('RA [deg]', size=8) if 'ra' in ax.get_xlabel() else ax.set_xlabel('x')
+        ax.set_ylabel('Dec [deg]', size=8) if 'dec' in ax.get_ylabel() else ax.set_ylabel('y')
+        if wave_array is not None:
+            title_label = f"{wave_array[index]:.0f}"+r"$\mathrm{\AA}$"
+        else:
+            title_label = f"Frame Numer # {index}"
+        ax.set_title(title_label, size=9)
+        
+        
+        # Save the plot if output_dir is provided
+        if output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = output_dir / f'Slice_num_{index}.png' if output_name is None else output_dir / output_name
+            fig.savefig(output_path, dpi=300)
+            plt.close(fig)
+        else:
+           return ax
         
     
     def allCube(self,
             cube: str | Path,
-            output_dir: str | Path = None
+            colorbar: bool = False,
+            scale: str = 'Zscale',
+            output_dir: str | Path = None,
+            output_name: str = None
             ) -> None:
         
         with fits.open(cube) as hdul:
@@ -298,10 +336,10 @@ class plot:
         for i, ax in enumerate(axes.flatten()):
             col = i % l
             
-            ax = self.Slice(cube=cube, index=i, ax=ax, cmap=cmaps[i])
+            ax = self.Slice(cube=cube, index=i, ax=ax, cmap=cmaps[i], colorbar=colorbar, scale=scale)
             ax.tick_params(axis='both', which='both', 
                            labelsize=7, direction='in',
-                           grid_color='#444444', grid_alpha=0.5, grid_linewidth=0.7, grid_linestyle='--')
+                           grid_color='#BBBBBB', grid_alpha=0.7, grid_linewidth=0.7, grid_linestyle='--')
             ax.tick_params(axis='x', which='both',
                            bottom=True, top=False)
             ax.tick_params(axis='y', which='both',
@@ -312,4 +350,15 @@ class plot:
                 ax.coords['Dec'].set_ticklabel_visible(False)     # tick labels
                 ax.set_ylabel('')
             
-        plt.tight_layout()
+        fig.tight_layout()
+        
+                # Save the plot if output_dir is provided
+        if output_dir is not None:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            cube_stem = Path(cube).stem
+            output_path = output_dir / f'Cube_2D_{cube_stem}.png' if output_name is None else output_dir / output_name
+            fig.savefig(output_path, dpi=300)
+            plt.close(fig)
+        else:
+           return fig
