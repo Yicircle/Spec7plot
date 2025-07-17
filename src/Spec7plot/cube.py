@@ -104,6 +104,10 @@ class Cube:
         # 4) Create WCS from the first file's header
         wcs0 = WCS(hdr0)
         cube_hdr = wcs0.to_header()
+        
+        for key in list(cube_hdr.keys()):
+            if key.startswith(('PV')):
+                cube_hdr.remove(key, ignore_missing=True)
 
         # 5) Conserve spatial axis information (CDELT/CD)
         if 'CDELT1' in hdr0 and 'CDELT2' in hdr0:
@@ -130,7 +134,7 @@ class Cube:
         cube_hdr['NAXIS3']  = n_filt
 
         cube_hdr['CTYPE3']  = 'WAVELENGTH'
-        cube_hdr['CUNIT3']  = hdr0.get('CUNIT3', hdr0.get('CUNIT1', '')) 
+        cube_hdr['CUNIT3']  = hdr0.get('CUNIT3', 'nm') 
         cube_hdr['CRPIX3']  = 1
         cube_hdr['CRVAL3']  = ref_wav
         cube_hdr['CDELT3']  = delta_wav

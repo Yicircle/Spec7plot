@@ -6,6 +6,8 @@ import seaborn as sns
 from pathlib import Path
 from astropy.io import fits
 from astropy.wcs import WCS
+import astropy.wcs as wcs
+from astropy.wcs import WCSSUB_LONGITUDE, WCSSUB_LATITUDE
 
 class plot:
     def __init__(self):
@@ -35,9 +37,8 @@ class plot:
             N = N + 1
         return None, None  # Return None if no valid pair is found
     
-    
-    def makeSpecColors(self, 
-                       n: int = 40, 
+    @staticmethod
+    def makeSpecColors(n: int = 40, 
                        palette:str = 'Spectral_r'
                        ) -> list:
         
@@ -80,11 +81,11 @@ class plot:
         r_l, g_l, b_l = colorsys.hls_to_rgb(h, l_l, s)
         return (r_l, g_l, b_l, a)
     
-    def makeSepcCmaps(self,
-                      n:int = 40,
+    @staticmethod
+    def makeSepcCmaps(n:int = 40,
                       lightness:str = 'dark'
                       ) -> list:
-        colours = [self.lighten_hls(c, amount=0.95) for c in self.makeSpecColors(n)]
+        colours = [plot.lighten_hls(c, amount=0.95) for c in plot.makeSpecColors(n)]
         colours = [matplotlib.colors.rgb2hex(tuple(c), keep_alpha=True) for c in colours]
         
         if (lightness != 'light') & (lightness != 'dark'):
@@ -93,7 +94,7 @@ class plot:
         cmaps = [sns.color_palette(f"{lightness}:{c}", as_cmap=True) for c in colours]
         return cmaps
 
-
+    @classmethod
     def SED(self,
             cube: str | Path,
             output_dir: str | Path = None,
@@ -151,7 +152,12 @@ class plot:
                 raise ValueError("Aperture must be provided when using sky_loc.")
             # Convert sky_loc to pixel_loc based on the WCS information
             from astropy.wcs import WCS
-            wcs2d = WCS(header).celestial
+            try:
+                wcs2d = WCS(header).celestial
+            except RuntimeError:    
+                wcs2d = WCS(header).sub([WCSSUB_LONGITUDE | WCSSUB_LATITUDE])
+                
+            print(f"Using WCS header: {wcs2d}")
             pixel_loc = wcs2d.all_world2pix(sky_loc[0], sky_loc[1], 0)
             aperture = np.abs(int(aperture / (wcs2d.pixel_scale_matrix[0, 0] * 3600)))  # Convert aperture to pixel scale
             loc_string = f'{sky_loc[0]:.3f}, {sky_loc[1]:.3f}'
@@ -159,7 +165,11 @@ class plot:
             loc_string = f'{pixel_loc[0]:.1f}, {pixel_loc[1]:.1f}'
         
         # Extract the SED from the location
-        k, l = pixel_loc
+        k, l = map(float, pixel_loc)
+        if not isinstance(k, (int, float)) or not isinstance(l, (int, float)):
+            print(f"Pixel location provided: {pixel_loc}")
+            raise ValueError("Invalid pixel location provided. Ensure pixel_loc contains valid indices.")        
+        
         if aperture is not None:
             # Extract a circular aperture around the pixel
             from photutils.aperture import CircularAperture
@@ -218,7 +228,7 @@ class plot:
         else:
            return ax
        
-    
+    @classmethod
     def Slice(self,
               cube: str | Path,
               index: int,
@@ -316,7 +326,7 @@ class plot:
         else:
            return ax
         
-    
+    @classmethod
     def allCube(self,
             cube: str | Path,
             colorbar: bool = False,
