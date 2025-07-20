@@ -15,7 +15,8 @@ warnings.simplefilter('ignore', category=FITSFixedWarning)
 class imRegister:
     def __init__(self,
                  input_images: list | np.ndarray,
-                 output_dir: str | Path
+                 output_dir: str | Path,
+                 reference: str | Path = None
                  ) -> None:
 
         if not isinstance(input_images, np.ndarray):
@@ -29,7 +30,10 @@ class imRegister:
         else:
             self.input_images = input_images
 
-        self.ref_file = self.input_images[0]
+        if reference is None:
+            self.ref_file = self.input_images[0]
+        else:
+            self.ref_file = reference
 
         if isinstance(output_dir, str):
             self.output_dir = Path(output_dir)
