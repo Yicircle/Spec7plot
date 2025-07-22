@@ -5,7 +5,7 @@ from pathlib import Path
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
-from reproject import reproject_interp
+from reproject import reproject_interp, reproject_adaptive
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
@@ -87,7 +87,8 @@ class imRegister:
             with fits.open(ref_path) as hdul_ref:
                 ref_header = hdul_ref[0].header
 
-                output_data, footprint = reproject_interp((input_data, input_header), ref_header, order='bilinear')
+                output_data, footprint = reproject_adaptive((input_data, input_header), ref_header, conserve_flux=True)
+                # Use reproject_adaptive for convservation of flux
 
                 ref_wcs = WCS(ref_header)
                 ref_wcs_header = ref_wcs.to_header()
