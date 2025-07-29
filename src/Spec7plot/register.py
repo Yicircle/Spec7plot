@@ -5,7 +5,7 @@ from pathlib import Path
 from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.nddata import Cutout2D
-from reproject import reproject_interp, reproject_adaptive
+from reproject import reproject_interp, reproject_adaptive, reproject_exact
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
@@ -16,7 +16,8 @@ class imRegister:
     def __init__(self,
                  input_images: list | np.ndarray,
                  output_dir: str | Path,
-                 reference: str | Path = None
+                 reference: str | Path = None,
+                 reproject_type: str = "interpolate"
                  ) -> None:
 
         if not isinstance(input_images, np.ndarray):
@@ -47,14 +48,20 @@ class imRegister:
                 self.output_dir.mkdir(parents=True, exist_ok=True)
             except Exception as e:
                 raise OSError(f"Could not create output directory: {e}")
+        
+        if reproject_type in ["interpolate", "exact", "adaptive"]:
+            self.reproject_type = reproject_type
+        else:
+            raise ValueError("Wrong Reprojection Type. Try between 'interpolate', 'exact', 'adaptive'.")
 
     def run(self,
             position: tuple = (5100, 3400),
             size: tuple = (100, 100),
-            use_skycoord: bool = False
+            use_skycoord: bool = False,
+            **reproject_kwargs
             ) -> list:
         for input_file in self.input_images:
-            registered = self.wRegistration(input_file)
+            registered = self.wRegistration(input_file, self.reproject_type, **reproject_kwargs)
             if use_skycoord:
                 self.cutout_sky(skycoord=position, size=size, filename=registered)
             else:
@@ -69,13 +76,21 @@ class imRegister:
         return new_name
 
     def wRegistration(self,
-                      input_file: str
+                      input_file: str,
+                      reproject_type: str,
+                      **kwargs
                       ) -> str:
 
         output_file = os.path.join(
             self.output_dir,
             self.add_prefix(input_file, prefix='wr_')
         )
+        
+        reproject_func = {
+            "interpolate": reproject_interp,
+            "exact": reproject_exact,
+            "adaptive": reproject_adaptive
+        }
 
         input_path = Path(input_file)
         ref_path = Path(self.ref_file)
@@ -87,8 +102,7 @@ class imRegister:
             with fits.open(ref_path) as hdul_ref:
                 ref_header = hdul_ref[0].header
 
-                output_data, footprint = reproject_adaptive((input_data, input_header), ref_header, conserve_flux=True)
-                # Use reproject_adaptive for convservation of flux
+                output_data, footprint = reproject_func[reproject_type](input_data=(input_data, input_header), output_projection=ref_header, **kwargs)
 
                 ref_wcs = WCS(ref_header)
                 ref_wcs_header = ref_wcs.to_header()
@@ -118,7 +132,7 @@ class imRegister:
 
         wcs_orig = WCS(orig_header)
 
-        cut = Cutout2D(data, position, size, wcs=wcs_orig)
+        cut = Cutout2D(data, position, size, wcs=wcs_orig, mode="partial", fill_value=0.0)
 
         new_header = orig_header.copy()
         for key in list(new_header.keys()):

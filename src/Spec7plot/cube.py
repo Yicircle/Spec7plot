@@ -47,6 +47,16 @@ class Cube:
         self.wcs = None
         self.header_cube = None
 
+    def _band_name_parser(self, file_name):
+        import re
+        """Parse band names from a given string or list."""
+        if not isinstance(file_name, str):
+            raise ValueError("file_name must be a string")
+        for band in [f"m{wav}" for wav in np.arange(400, 900, 25)]:
+            pattern = "|".join(map(re.escape, ['-', ' ', '_', '.']))
+            if band in re.split(pattern, file_name):
+                return band
+        return None
 
     def build(self):
         """
@@ -78,6 +88,10 @@ class Cube:
                 data_i = hdul[self.ext].data
                 hdr_i = hdul[self.ext].header
 
+            if ('ZP_AUTO' in hdr_i) and ('BUNIT' not in hdr_i):
+                data_i = 3631 * (data_i) * 10 ** (-float(hdr_i["ZP_AUTO"]) / 2.5) * 1e3
+                hdr_i["BUNIT"] = "mJy"
+            
             if 'FILTER' in hdr_i:
                 try:
                     wav = float(''.join(filter(str.isdigit, hdr_i['FILTER'])))
@@ -89,6 +103,14 @@ class Cube:
                 except ValueError:
                     continue  # Skip if FILTER cannot be converted to float
             else:
+                # parse band wavelength from file name
+                band_name = self._band_name_parser(fname)
+                wav = float(''.join(filter(str.isdigit, band_name)))
+                argwav = np.argwhere(np.array(wavelengths) == wav)
+                if argwav.size > 0:
+                    cube_data[argwav[0][0], :, :] = data_i
+                else:
+                    pass
                 continue
             
         
